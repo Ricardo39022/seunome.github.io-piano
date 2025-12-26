@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Piano Social Pro - Fix 2025</title>
+    <!-- Tentativa de carregamento robusto -->
+    <script src="cdnjs.cloudflare.com"></script>
+    <script src="cdn.jsdelivr.net"></script>
+    <style>
+        :root { --w: 40px; --b: 26px; --gap: 2px; }
+        body { font-family: sans-serif; background: #0a0a0a; color: #fff; margin: 0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; user-select: none; }
+        .ui { background: #1a1a1a; padding: 15px; display: flex; justify-content: space-around; align-items: center; border-bottom: 2px solid #333; }
+        .piano-scroll { background: #000; padding: 40px 0; border-top: 4px solid #444; overflow-x: auto; flex-shrink: 0; }
+        .piano-body { display: flex; position: relative; width: fit-content; margin: 0 auto; gap: var(--gap); }
+        .wk { width: var(--w); height: 180px; background: #fff; border-radius: 0 0 5px 5px; cursor: pointer; flex-shrink: 0; display: flex; align-items: flex-end; justify-content: center; color: #999; font-size: 10px; padding-bottom: 5px; }
+        .bk { width: var(--b); height: 110px; background: #333; position: absolute; z-index: 5; cursor: pointer; margin-left: -13px; border: 1px solid #000; }
+        .active { background: #3498db !important; }
+        .remote { background: #e74c3c !important; }
+        canvas { background: #000; border: 2px solid #333; cursor: crosshair; flex-grow: 1; margin: 10px; border-radius: 10px; }
+        #status { color: #f1c40f; font-weight: bold; }
+        input, button { padding: 8px; border-radius: 5px; border: none; margin: 2px; }
+    </style>
+</head>
+<body>
+
+    <div class="ui">
+        <div>ID: <b id="my-id">...</b></div>
+        <div>
+            <input type="text" id="target-id" placeholder="ID do Amigo">
+            <button onclick="conectar()">Conectar</button>
+        </div>
+        <div id="status">Verificando Bibliotecas...</div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <div class="piano-scroll">
+        <div class="piano-body" id="piano"></div>
+    </div>
+
+<script>
+    // SISTEMA DE CHECAGEM DE ERROS
+    let synth, peer, conn, mDown = false;
+    const status = document.getElementById('status');
+
+    window.onload = () => {
+        const toneOk = typeof Tone !== 'undefined';
+        const peerOk = typeof Peer !== 'undefined';
+
+        if (!toneOk || !peerOk) {
+            status.innerHTML = "❌ ERRO: O navegador bloqueou as bibliotecas. <br> Abra o arquivo pelo CodePen ou Vercel.";
+            status.style.color = "red";
+            console.error("Tone:", toneOk, "Peer:", peerOk);
+            return;
+        }
+        
+        status.innerText = "✅ Tudo pronto!";
+        iniciarPiano();
+    };
+
+    function iniciarPiano() {
+        const piano = document.getElementById('piano');
+        const layout = [{n:'C',s:1},{n:'D',s:1},{n:'E',s:0},{n:'F',s:1},{n:'G',s:1},{n:'A',s:1},{n:'B',s:0}];
+        let wkIdx = 0;
+
+        for (let o = -1; o <= 9; o++) {
+            for (let it of layout) {
+                if (o === -1 && it.n !== 'A' && it.n !== 'B') continue;
+                if (o === 9 && it.n !== 'C') break;
+                
+                const note = it.n + o;
+                const wk = document.createElement('div');
+                wk.className = 'wk'; wk.id = "k-" + note.replace('#','s');
+                if (it.n === 'C' || note === 'A-1') wk.innerText = note;
+                
+                wk.onmousedown = () => { mDown = true; trigger(note); };
+                wk.onmouseenter = () => { if(mDown) trigger(note); };
+                piano.appendChild(wk);
+
+                if (it.s && note !== 'C9') {
+                    const bk = document.createElement('div');
+                    bk.className = 'bk'; bk.id = "k-" + it.n + "s" + o;
+                    bk.style.left = ((wkIdx + 1) * 42 + wkIdx * 2 + 1) + "px";
+                    bk.onmousedown = (e) => { e.stopPropagation(); mDown = true; trigger(it.n + '#' + o); };
+                    bk.onmouseenter = () => { if(mDown) trigger(it.n + '#' + o); };
+                    piano.appendChild(bk);
+                }
+                wkIdx++;
+            }
+        }
+        window.onmouseup = () => mDown = false;
+
+        // PeerJS
+        peer = new Peer();
+        peer.on('open', id => { document.getElementById('my-id').innerText = id; });
+        peer.on('connection', c => { conn = c; setupRede(); });
+    }
+
+    async function trigger(n, remote = false) {
+        if (!synth && typeof Tone !== 'undefined') {
+            await Tone.start();
+            synth = new Tone.PolySynth(Tone.Synth).toDestination();
+        }
+        if (synth) synth.triggerAttackRelease(n, "8n");
+        
+        const el = document.getElementById("k-" + n.replace('#', 's'));
+        if (el) {
+            el.classList.add(remote ? 'remote' : 'active');
+            setTimeout(() => el.classList.remove('active', 'remote'), 200);
+        }
+        if (!remote && conn && conn.open) conn.send({t: 'p', n});
+    }
+
+    function conectar() {
+        const tid = document.getElementById('target-id').value;
+        conn = peer.connect(tid);
+        setupRede();
+    }
+
+    function setupRede() {
+        conn.on('open', () => {
+            status.innerText = "🤝 CONECTADO!";
+            conn.on('data', d => {
+                if (d.t === 'p') trigger(d.n, true);
+                if (d.t === 'd') desenhar(d.x, d.y, 'red');
+            });
+        });
+    }
+
+    const cv = document.getElementById('canvas'), ctx = cv.getContext('2d');
+    cv.width = cv.offsetWidth; cv.height = cv.offsetHeight;
+    let drawing = false;
+    cv.onmousedown = () => drawing = true;
+    window.addEventListener('mouseup', () => drawing = false);
+    cv.onmousemove = (e) => {
+        if (!drawing) return;
+        const r = cv.getBoundingClientRect();
+        const x = e.clientX - r.left, y = e.clientY - r.top;
+        desenhar(x, y, '#3498db');
+        if (conn && conn.open) conn.send({t: 'd', x, y});
+    };
+    function desenhar(x, y, c) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); }
+</script>
+</body>
+</html>
