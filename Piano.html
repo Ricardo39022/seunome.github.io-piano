@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Piano Social 2025</title>
+    <!-- BIBLIOTECA DE REDE (Se falhar aqui, o multiplayer não ativa) -->
+    <script src="cdn.jsdelivr.net"></script>
+    <style>
+        :root { --w: 40px; --b: 26px; }
+        body { font-family: sans-serif; background: #111; color: #fff; margin: 0; text-align: center; overflow: hidden; }
+        .piano-scroll { width: 100vw; overflow-x: auto; background: #000; padding: 40px 0; border-top: 2px solid #444; }
+        .piano-body { display: flex; position: relative; width: fit-content; margin: 0 auto; gap: 2px; }
+        .wk { width: var(--w); height: 180px; background: #fff; border-radius: 0 0 5px 5px; cursor: pointer; flex-shrink: 0; }
+        .bk { width: var(--b); height: 110px; background: #333; position: absolute; z-index: 5; cursor: pointer; margin-left: -13px; }
+        .active { background: #3498db !important; }
+        #canvas { background: #000; border: 2px solid #333; cursor: crosshair; margin: 10px; border-radius: 10px; }
+        input, button { padding: 8px; margin: 5px; border-radius: 5px; border: none; }
+    </style>
+</head>
+<body>
+
+    <div style="padding: 10px; background: #222;">
+        ID: <b id="my-id">Carregando...</b> | 
+        <input type="text" id="peer-id" placeholder="ID do Amigo">
+        <button id="btn-con">Conectar</button>
+        <div id="status">Aguardando...</div>
+    </div>
+
+    <!-- Área de Desenho -->
+    <canvas id="canvas" width="600" height="200"></canvas>
+
+    <!-- Piano -->
+    <div class="piano-scroll">
+        <div class="piano-body" id="piano"></div>
+    </div>
+
+<script>
+    // 1. Som Nativo (Funciona mesmo sem biblioteca externa)
+    const audio = new (window.AudioContext || window.webkitAudioContext)();
+    function play(f) {
+        if(audio.state === 'suspended') audio.resume();
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.type = 'triangle'; o.frequency.value = f;
+        g.gain.exponentialRampToValueAtTime(0.001, audio.currentTime + 0.8);
+        o.connect(g); g.connect(audio.destination);
+        o.start(); o.stop(audio.currentTime + 0.8);
+    }
+    const getF = (n, o) => 440 * Math.pow(2, (['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'].indexOf(n) - 9 + (o - 4) * 12) / 12);
+
+    // 2. Gerar Teclas (A-1 a C9)
+    const piano = document.getElementById('piano');
+    let wkIdx = 0;
+    const layout = [{n:'C',s:1},{n:'D',s:1},{n:'E',s:0},{n:'F',s:1},{n:'G',s:1},{n:'A',s:1},{n:'B',s:0}];
+    for(let o=-1; o<=9; o++) {
+        for(let it of layout) {
+            if(o===-1 && it.n !== 'A' && it.n !== 'B') continue;
+            if(o===9 && it.n !== 'C') break;
+            const wk = document.createElement('div'); wk.className = 'wk';
+            const fW = getF(it.n, o);
+            wk.onmousedown = () => { play(fW); wk.classList.add('active'); setTimeout(()=>wk.classList.remove('active'), 200); if(conn) conn.send({t:'p', f:fW}); };
+            piano.appendChild(wk);
+            if(it.s && (it.n+o !== 'C9')) {
+                const bk = document.createElement('div'); bk.className = 'bk';
+                bk.style.left = ((wkIdx+1)*42 - 1) + "px";
+                const fB = getF(it.n+'#', o);
+                bk.onmousedown = (e) => { e.stopPropagation(); play(fB); bk.classList.add('active'); setTimeout(()=>bk.classList.remove('active'), 200); if(conn) conn.send({t:'p', f:fB}); };
+                piano.appendChild(bk);
+            }
+            wkIdx++;
+        }
+    }
+
+    // 3. Multiplayer (PeerJS)
+    let peer, conn;
+    try {
+        peer = new Peer();
+        peer.on('open', id => { document.getElementById('my-id').innerText = id; document.getElementById('status').innerText = "Online"; });
+        peer.on('connection', c => { conn = c; listen(); });
+        document.getElementById('btn-con').onclick = () => { conn = peer.connect(document.getElementById('peer-id').value); listen(); };
+    } catch(e) { document.getElementById('status').innerText = "Erro de Rede"; }
+
+    function listen() {
+        conn.on('open', () => {
+            document.getElementById('status').innerText = "Conectado!";
+            conn.on('data', d => {
+                if(d.t === 'p') play(d.f);
+                if(d.t === 'd') draw(d.x, d.y, 'red');
+            });
+        });
+    }
+
+    // 4. Desenho
+    const cv = document.getElementById('canvas'), ctx = cv.getContext('2d');
+    function draw(x,y,c) { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); }
+    cv.onmousemove = (e) => {
+        if(e.buttons !== 1) return;
+        const r = cv.getBoundingClientRect();
+        const x = e.clientX - r.left, y = e.clientY - r.top;
+        draw(x,y,'blue');
+        if(conn) conn.send({t:'d', x, y});
+    };
+</script>
+</body>
+</html>
